@@ -149,6 +149,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\autostart.ps1 remove
 4. Advanced → Environment Variables: `BOT_TOKEN` (Secret), `TZ_OFFSET=3`, `DB_PATH=./data/lingo.db`, при желании `AI_API_KEY` / `AI_BASE_URL` / `AI_MODEL`.
 5. **Create Web Service**. В логах должно появиться `[http] health-сервер: 0.0.0.0:10000`, затем `[bot] запущен: @...`.
 
+Альтернатива — Blueprint: в репозитории лежит `render.yaml`, поэтому в Render Dashboard можно выбрать **New → Blueprint** → репозиторий → **Apply**: сервис создастся сразу с `runtime: node`, `npm install`, `node src/index.js` и health check `/`. Секрет `BOT_TOKEN` Render попросит ввести при создании (`sync: false`). Уже созданный вручную сервис Blueprint не меняет — его нужно удалить.
+
 Версию Node задаёт файл `.node-version` (`24.22.1`): `node:sqlite` работает без флага начиная с 23.4.
 
 Особенности Free-плана:

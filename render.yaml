@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: lingo-bot
+    runtime: node
+    plan: free
+    region: frankfurt
+    branch: main
+    buildCommand: npm install
+    startCommand: node src/index.js
+    healthCheckPath: /
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: 24.22.1
+      - key: TZ_OFFSET
+        value: "3"
+      - key: DB_PATH
+        value: ./data/lingo.db
+      - key: BOT_TOKEN
+        sync: false
+      - key: AI_API_KEY
+        sync: false
