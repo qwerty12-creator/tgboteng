@@ -139,6 +139,25 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\autostart.ps1 remove
 
 `start-bot-hidden.vbs` сохранён в UTF-16LE — родная кодировка Windows Script Host; если перезаписать его в UTF-8, WSH прочитает русский текст как мусор.
 
+## Деплой на Render (бесплатный web service)
+
+Бот работает на long polling, а Render требует, чтобы web service слушал порт. Поэтому в `src/index.js` есть встроенный health-сервер: он поднимается **только когда задана переменная `PORT`** (Render выставляет её сам, локально она не нужна) и отвечает `200 ok` на любой GET.
+
+1. Render Dashboard → **New → Web Service** → GitHub → репозиторий `tgboteng`, ветка `main`.
+2. Name: `lingo-bot`, Language: `Node`, Root Directory: пусто, Region: ближайший (Frankfurt).
+3. Build Command: `npm install`, Start Command: `node src/index.js`, Instance Type: `Free`.
+4. Advanced → Environment Variables: `BOT_TOKEN` (Secret), `TZ_OFFSET=3`, `DB_PATH=./data/lingo.db`, при желании `AI_API_KEY` / `AI_BASE_URL` / `AI_MODEL`.
+5. **Create Web Service**. В логах должно появиться `[http] health-сервер: 0.0.0.0:10000`, затем `[bot] запущен: @...`.
+
+Версию Node задаёт файл `.node-version` (`24.22.1`): `node:sqlite` работает без флага начиная с 23.4.
+
+Особенности Free-плана:
+
+- инстанс засыпает после ~15 минут без входящих HTTP-запросов, поэтому нужен внешний пинг (cron-job.org или UptimeRobot) на адрес сервиса раз в 10 минут — иначе бот перестанет отвечать в Telegram;
+- файловая система стирается при каждом редеплое и рестарте: `data/lingo.db` (прогресс, слова, стрики) обнулится — persistent disk на Free недоступен, для постоянного хранения нужен платный план или Render Postgres;
+- один токен — один процесс: перед запуском в облаке останови локальный бот (`stop-bot.cmd`), иначе Telegram вернёт `409 Conflict` / `terminated by other getUpdates`;
+- голосовые останутся выключенными: `whisper-cli.exe` и `ffmpeg` рассчитаны на эту Windows-машину, в Linux-контейнере Render их нет (в логах `[stt] голосовые выключены`).
+
 ## Переменные окружения
 
 | Переменная | Назначение |

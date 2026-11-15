@@ -1,4 +1,5 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
 import path from 'node:path';
 import { config, hasStt } from './config.js';
 import { openDb, closeDb } from './db/index.js';
@@ -32,6 +33,25 @@ function clearPidFile() {
   } catch {
     /* файла нет — значит уже удалён */
   }
+}
+
+/**
+ * Health-сервер для PaaS (Render и подобных): web service обязан слушать порт
+ * из PORT, иначе деплой падает с «no open ports detected». Локально PORT не
+ * задан — сервер не поднимается и поведение бота не меняется. Любой GET
+ * отвечает 200, поэтому внешний пинг (cron-job.org, UptimeRobot) не даёт
+ * бесплатному инстансу заснуть.
+ */
+function startHealthServer() {
+  const port = Number(process.env.PORT);
+  if (!Number.isInteger(port) || port <= 0) return null;
+  const server = createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' });
+    res.end(`ok uptime=${Math.round(process.uptime())}s\n`);
+  });
+  server.on('error', (error) => console.error('[http] health-сервер:', error.message));
+  server.listen(port, '0.0.0.0', () => console.log(`[http] health-сервер: 0.0.0.0:${port}`));
+  return server;
 }
 
 async function poll() {
@@ -90,6 +110,7 @@ async function main() {
   openDb();
   writePidFile();
   console.log(`[db] ${config.dbPath}`);
+  const healthServer = startHealthServer();
   const me = await waitForTelegram();
   console.log(`[bot] запущен: @${me.username} (${me.first_name})`);
   try {
@@ -107,6 +128,7 @@ async function main() {
   const shutdown = (signal) => {
     console.log(`\n[bot] ${signal}: завершаю работу`);
     running = false;
+    healthServer?.close();
     closeDb();
     clearPidFile();
     process.exit(0);
