@@ -1,0 +1,16 @@
+node_modules/
+data/
+.env
+*.log
+_ver.txt
+_y.txt
+_check.js
+_chk*.js
+_chk*.txt
+_test*.txt
+_checkall.*
+_smoke.*
+run/
+logs/
+*.lnk
+
