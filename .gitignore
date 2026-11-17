@@ -1,5 +1,6 @@
 node_modules/
 data/
+bin/
 .env
 *.log
 _ver.txt

@@ -6,7 +6,7 @@ services:
     region: frankfurt
     branch: main
     buildCommand: npm install
-    startCommand: node src/index.js
+    startCommand: sh scripts/start.sh
     healthCheckPath: /
     autoDeploy: true
     envVars:
@@ -19,6 +19,18 @@ services:
       # Голосовые в облаке: ключ берётся из AI_API_KEY, endpoint — DeepSeek ASR.
       - key: STT_BASE_URL
         value: https://api.deepseek.com/v1
+      # Репликация SQLite в Cloudflare R2 (S3 API). Пока эти переменные пусты,
+      # бот работает без репликации — база живёт внутри контейнера.
+      - key: LITESTREAM_BUCKET
+        sync: false
+      - key: LITESTREAM_PREFIX
+        value: lingo
+      - key: LITESTREAM_ENDPOINT
+        sync: false
+      - key: LITESTREAM_ACCESS_KEY_ID
+        sync: false
+      - key: LITESTREAM_SECRET_ACCESS_KEY
+        sync: false
       - key: BOT_TOKEN
         sync: false
       - key: AI_API_KEY

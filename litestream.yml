@@ -1,0 +1,14 @@
+# Непрерывная репликация SQLite во внешнее хранилище (Cloudflare R2 или любой S3-совместимый сервис).
+# Все значения берутся из переменных окружения, поэтому секретов в файле нет.
+# Документация: https://litestream.io/reference/config/
+dbs:
+  - path: ${DB_PATH}
+    replica:
+      type: s3
+      bucket: ${LITESTREAM_BUCKET}
+      path: ${LITESTREAM_PREFIX}
+      endpoint: ${LITESTREAM_ENDPOINT}
+      region: auto
+      access-key-id: ${LITESTREAM_ACCESS_KEY_ID}
+      secret-access-key: ${LITESTREAM_SECRET_ACCESS_KEY}
+      sync-interval: 10s
