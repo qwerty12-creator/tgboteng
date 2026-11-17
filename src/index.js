@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import path from 'node:path';
-import { config, hasStt } from './config.js';
+import { config, sttMode } from './config.js';
 import { openDb, closeDb } from './db/index.js';
 import { getMe, getUpdates, setMyCommands } from './telegram/api.js';
 import { handleUpdate } from './bot/app.js';
@@ -119,10 +119,13 @@ async function main() {
     console.error('[bot] не удалось обновить меню команд:', error.message);
   }
   console.log(`[ai] ${config.ai.apiKey ? `подключён (${config.ai.model})` : 'офлайн-режим'}`);
+  const voiceMode = sttMode();
   console.log(
-    hasStt()
+    voiceMode === 'local'
       ? `[stt] голосовые: локальный whisper.cpp (${config.stt.whisperModel})`
-      : '[stt] голосовые выключены: не найдены whisper-cli.exe и/или модель',
+      : voiceMode === 'api'
+        ? `[stt] голосовые: DeepSeek ASR (${config.stt.apiBaseUrl}${config.stt.apiPath})`
+        : '[stt] голосовые выключены: нет whisper.cpp и не задан ключ AI_API_KEY/STT_API_KEY',
   );
 
   const shutdown = (signal) => {

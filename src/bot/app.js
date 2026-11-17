@@ -15,7 +15,7 @@ import { TOPIC_BY_ID } from '../content/grammarBank.js';
 import { pickQuestions } from '../core/exercises.js';
 import { conversationTurn, formatChatReply } from '../core/conversation.js';
 import { aiAvailable } from '../ai/provider.js';
-import { sttAvailable, sttProblem, transcribeAudio } from '../ai/speech.js';
+import { sttAvailable, sttProblem, transcribeAudio, sttLimits, asrSupportedMime } from '../ai/speech.js';
 
 const DEFAULT_GOAL_TARGETS = { diary: 20, words: 100, grammar: 50, practiceDays: 30, writing: 20 };
 
@@ -117,7 +117,32 @@ async function handleVoice(user, chatId, message) {
     return tg.sendMessage(chatId, 'Голосовое слишком большое: Telegram не отдаёт ботам файлы больше 20 МБ. Разбей его на части.');
   }
 
-  await tg.sendMessage(chatId, '🎤 Слушаю и распознаю локально — обычно это занимает меньше минуты…');
+  // Облачный ASR (DeepSeek) принимает только короткие ogg/opus или wav — предупреждаем заранее.
+  const limits = sttLimits();
+  if (limits.mode === 'api') {
+    if (media.duration && media.duration > limits.maxSeconds) {
+      return tg.sendMessage(
+        chatId,
+        `Голосовое длиннее ${Math.round(limits.maxSeconds / 60)} мин — такое пока не распознаю. Разбей его на части.`,
+      );
+    }
+    if (media.file_size && media.file_size > limits.maxBytes) {
+      return tg.sendMessage(chatId, 'Голосовое больше 8 МБ — такое пока не распознаю. Разбей его на части.');
+    }
+    if (!asrSupportedMime(media.mime_type)) {
+      return tg.sendMessage(
+        chatId,
+        'Такой формат не распознаю. Запиши голосовое прямо в Telegram (не отправляй файлом) или напиши текстом.',
+      );
+    }
+  }
+
+  await tg.sendMessage(
+    chatId,
+    limits.mode === 'api'
+      ? '🎤 Распознаю речь — это займёт несколько секунд…'
+      : '🎤 Слушаю и распознаю локально — обычно это занимает меньше минуты…',
+  );
   await tg.sendChatAction(chatId, 'typing');
   try {
     const file = await tg.getFile(media.file_id);

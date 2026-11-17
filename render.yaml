@@ -16,6 +16,9 @@ services:
         value: "3"
       - key: DB_PATH
         value: ./data/lingo.db
+      # Голосовые в облаке: ключ берётся из AI_API_KEY, endpoint — DeepSeek ASR.
+      - key: STT_BASE_URL
+        value: https://api.deepseek.com/v1
       - key: BOT_TOKEN
         sync: false
       - key: AI_API_KEY

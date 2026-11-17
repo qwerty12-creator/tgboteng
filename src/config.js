@@ -68,6 +68,14 @@ export function resolveStt(env = process.env, root = ROOT_DIR) {
     ffmpeg: env.FFMPEG || 'ffmpeg',
     threads: num(env.WHISPER_THREADS, Math.min(4, os.cpus().length)),
     timeoutMs: num(env.WHISPER_TIMEOUT_MS, 600000),
+    // Облачное распознавание (DeepSeek ASR): ключ по умолчанию берём от AI,
+    // но endpoint всегда свой — chat-провайдер может быть другим.
+    apiKey: env.STT_API_KEY || env.AI_API_KEY || '',
+    apiBaseUrl: (env.STT_BASE_URL || 'https://api.deepseek.com/v1').replace(/\/+$/, ''),
+    apiPath: env.STT_API_PATH || '/tools/asr',
+    maxBytes: num(env.STT_MAX_BYTES, 8 * 1024 * 1024),
+    maxSeconds: num(env.STT_MAX_SECONDS, 120),
+    apiTimeoutMs: num(env.STT_API_TIMEOUT_MS, 120000),
   };
 }
 
@@ -89,7 +97,16 @@ export const config = {
 export const hasAi = () => Boolean(config.ai.apiKey && !config.ai.apiKey.includes('*'));
 
 /** Локальное распознавание готово: найдены whisper-cli.exe и модель. */
-export const hasStt = () =>
+export const hasLocalStt = () =>
   Boolean(config.stt.whisperExe && config.stt.whisperModel) &&
   fs.existsSync(config.stt.whisperExe) &&
   fs.existsSync(config.stt.whisperModel);
+
+/** Облачное распознавание готово: есть ключ DeepSeek (STT_API_KEY или AI_API_KEY). */
+export const hasRemoteStt = () => Boolean(config.stt.apiKey && !config.stt.apiKey.includes('*'));
+
+/** Голосовые доступны: локальный whisper.cpp или DeepSeek ASR. */
+export const hasStt = () => hasLocalStt() || hasRemoteStt();
+
+/** 'local' — whisper.cpp на машине, 'api' — DeepSeek ASR, null — голосовые выключены. */
+export const sttMode = () => (hasLocalStt() ? 'local' : hasRemoteStt() ? 'api' : null);

@@ -2,20 +2,31 @@ import { spawn } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { config, hasStt } from '../config.js';
+import { config, hasLocalStt, hasRemoteStt, sttMode } from '../config.js';
 
 /** Локальное распознавание доступно: whisper.cpp и модель найдены. */
 export function sttAvailable() {
-  return hasStt();
+  return hasLocalStt() || hasRemoteStt();
 }
 
 /** Что именно не найдено — для понятного сообщения пользователю. */
 export function sttProblem() {
+  if (sttMode() === 'api') return '';
   if (!config.stt.whisperExe) return 'не задан путь к whisper-cli.exe';
   if (!existsSync(config.stt.whisperExe)) return `не найден ${config.stt.whisperExe}`;
   if (!config.stt.whisperModel) return 'не задан путь к модели whisper';
   if (!existsSync(config.stt.whisperModel)) return `не найдена модель ${config.stt.whisperModel}`;
+  if (!hasRemoteStt()) return 'нет ни whisper.cpp, ни ключа DeepSeek (AI_API_KEY/STT_API_KEY)';
   return '';
+}
+
+/** Текущий режим и лимиты — для сообщений в чате. */
+export function sttLimits() {
+  return {
+    mode: sttMode(),
+    maxBytes: config.stt.maxBytes,
+    maxSeconds: config.stt.maxSeconds,
+  };
 }
 
 const FILE_NAMES = {
@@ -36,6 +47,65 @@ const FILE_NAMES = {
 /** Имя временного файла: ffmpeg и whisper ориентируются на расширение. */
 export function audioFileName(mimeType = '') {
   return FILE_NAMES[String(mimeType).toLowerCase()] ?? 'voice.ogg';
+}
+
+/* ------------------------------------------------- облачное распознавание */
+
+/** DeepSeek ASR принимает только 16-bit PCM WAV и Ogg Opus (формат голосовых Telegram). */
+const ASR_MIME_TYPES = new Set(['audio/ogg', 'audio/oga', 'audio/opus', 'audio/wav', 'audio/x-wav']);
+
+export function asrSupportedMime(mimeType = '') {
+  return ASR_MIME_TYPES.has(String(mimeType).toLowerCase());
+}
+
+/** HTTP-статус ASR → код причины: в чат не показываем, пишем в лог. */
+export function asrErrorCode(status) {
+  if (status === 400) return 'STT_BAD_FORMAT';
+  if (status === 408) return 'STT_TIMEOUT';
+  if (status === 413) return 'STT_TOO_LARGE';
+  if (status === 429 || status === 503 || status === 504) return 'STT_BUSY';
+  return `STT_HTTP_${status}`;
+}
+
+/**
+ * Распознаёт речь в облаке: DeepSeek ASR (POST /v1/tools/asr).
+ * Файл уходит целиком, язык определяется автоматически, лимиты — 8 МиБ и 120 с.
+ * Ключ тот же, что у AI (или STT_API_KEY), endpoint — STT_BASE_URL.
+ */
+export async function transcribeViaApi(audio, options = {}) {
+  const settings = { ...config.stt, ...(options.settings ?? {}) };
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const mimeType = String(audio.mimeType ?? '').toLowerCase();
+
+  if (!asrSupportedMime(mimeType)) throw new Error(`STT_BAD_FORMAT: ${mimeType || 'unknown'}`);
+  if (audio.buffer.length > settings.maxBytes) throw new Error('STT_TOO_LARGE');
+
+  const form = new FormData();
+  form.append('file', new Blob([audio.buffer], { type: mimeType }), audio.fileName || audioFileName(mimeType));
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), settings.apiTimeoutMs);
+  try {
+    const response = await fetchImpl(`${settings.apiBaseUrl}${settings.apiPath}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${settings.apiKey}` },
+      body: form,
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      const body = await response.text().catch(() => '');
+      throw new Error(`${asrErrorCode(response.status)}: ${body.slice(0, 200)}`);
+    }
+    const data = await response.json();
+    const text = cleanTranscript(data?.text ?? '');
+    if (!text) throw new Error('STT_EMPTY_RESPONSE');
+    return { text, provider: 'deepseek-asr' };
+  } catch (error) {
+    if (error?.name === 'AbortError') throw new Error('STT_TIMEOUT');
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**
@@ -97,6 +167,8 @@ export function runProcess(command, args, timeoutMs = 120000) {
  */
 export async function transcribeAudio(audio, options = {}) {
   if (!sttAvailable()) throw new Error(`STT_DISABLED: ${sttProblem()}`);
+  // Локального whisper нет (например, Render) — распознаём в облаке DeepSeek.
+  if (!hasLocalStt()) return transcribeViaApi(audio, options);
 
   const settings = config.stt;
   const dir = mkdtempSync(path.join(os.tmpdir(), 'lingo-stt-'));
