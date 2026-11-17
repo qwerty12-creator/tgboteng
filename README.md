@@ -178,15 +178,35 @@ Free-план стирает диск контейнера при каждом �
 
 Настройка R2 (один раз):
 
-1. Cloudflare Dashboard → **R2** → **Create bucket**, например `lingo-backups` (Free: 10 ГБ).
-2. Настройки бакета → **Manage R2 API Tokens** → **Create API Token** → права **Object Read & Write**, ограничить бакетом.
-3. Сохранить **Access Key ID**, **Secret Access Key** и endpoint вида `https://<account_id>.r2.cloudflarestorage.com`.
-4. Render → сервис → **Environment**: `LITESTREAM_BUCKET`, `LITESTREAM_PREFIX=lingo`, `LITESTREAM_ENDPOINT`, `LITESTREAM_ACCESS_KEY_ID`, `LITESTREAM_SECRET_ACCESS_KEY` → **Save**.
-5. В логах после редеплоя: `[litestream] репликация в lingo-backups/lingo, база /opt/render/project/src/data/lingo.db`.
+1. **Бакет**: [Cloudflare Dashboard → R2](https://dash.cloudflare.com/?to=/:account/r2/overview) → **Create bucket** → имя `lingo-backups` (Free: 10 ГБ, имя только строчными буквами, цифрами и дефисами; если занято — добавь суффикс) → Location: **Automatic** → **Create bucket**.
+2. **Account ID**: на той же странице R2 Overview справа блок **Account details → Account ID** → **Copy**. Это 32-символьная строка вида `a1b2c3d4e5f6...`; она же видна в адресе дашборда `dash.cloudflare.com/<AccountID>/r2/...`.
+3. **Токен**: [R2 → Manage R2 API Tokens](https://dash.cloudflare.com/?to=/:account/r2/api-tokens) → **Create API Token** → Token name: `litestream-lingo` → Permissions: **Object Read & Write** → **Apply to specific buckets only** → выбрать `lingo-backups` → TTL: **Forever** → **Create API Token**. На следующем экране один раз показываются **Access Key ID** и **Secret Access Key** (Secret больше не покажут — сохрани сразу) и endpoint вида `https://<AccountID>.r2.cloudflarestorage.com`.
+4. **Render**: `https://dashboard.render.com/` → сервис `tgboteng` → **Environment** → **+ Add Environment Variable** (или **Edit → Bulk Edit**, по одной строке `KEY=value`) — добавить пять переменных и нажать **Save Changes** (Render запустит деплой):
 
-Проверка: сделай в боте любое действие с XP, затем **Manual Deploy → Clear build cache & deploy** — после рестарта прогресс должен сохраниться. Восстановление вручную: `litestream restore -config litestream.yml -o ./restored.db data/lingo.db`.
+   - `LITESTREAM_BUCKET` = `lingo-backups`
+   - `LITESTREAM_PREFIX` = `lingo`
+   - `LITESTREAM_ENDPOINT` = `https://<AccountID>.r2.cloudflarestorage.com` (только домен: без имени бакета, без слэша в конце)
+   - `LITESTREAM_ACCESS_KEY_ID` = Access Key ID из шага 3
+   - `LITESTREAM_SECRET_ACCESS_KEY` = Secret Access Key из шага 3
 
-Ограничения: один активный инстанс на базу (второй процесс с той же базой не запускай), регион R2 указывается как `auto`, а удаление бакета удаляет и резервные копии.
+5. **Start Command**: сервис → **Settings** → блок **Build & Deploy** → поле **Start Command** → `sh scripts/start.sh` → **Save Changes**. До этого изменения сервис запускает старый `node src/index.js`, и Litestream не стартует вообще.
+
+В логах (**Logs → Live tail**) после редеплоя: `[litestream] скачиваю v0.5.18 (linux-x86_64)`, затем `[litestream] репликация в lingo-backups/lingo, база /opt/render/project/src/data/lingo.db`, затем `[http] health-сервер: 0.0.0.0:10000` и `[bot] запущен: @...`.
+
+Проверка: сделай в боте любое действие с XP, затем **Manual Deploy → Clear build cache & deploy** — после рестарта прогресс должен сохраниться. В бакете (`R2 → lingo-backups → Objects`) при этом появляется префикс `lingo/` с файлами `generations/...` и `ltx/...`. Восстановление вручную: `litestream restore -config litestream.yml -o ./restored.db data/lingo.db`.
+
+Если что-то не так (ищи строки в **Logs**):
+
+| В логах | Причина | Что делать |
+| --- | --- | --- |
+| `[litestream] репликация не настроена` | не заданы или пустые `LITESTREAM_ENDPOINT` / `LITESTREAM_BUCKET` | проверить имена переменных в **Environment**, сохранить заново |
+| `[litestream] WARN восстановление не удалось` + `AccessDenied`, `403`, `SignatureDoesNotMatch` | токен без прав на бакет или неверные ключи | пересоздать токен: **Object Read & Write**, scope — конкретный бакет `lingo-backups` |
+| `no such host`, `dial tcp: lookup ... failed` | опечатка в endpoint или лишний путь | endpoint ровно `https://<AccountID>.r2.cloudflarestorage.com` |
+| `The specified bucket does not exist` | опечатка в имени бакета | сверить `LITESTREAM_BUCKET` с именем в R2 |
+| `[litestream] не удалось скачать бинарник` | GitHub недоступен из контейнера | передеплоить; если повторяется — скачать `litestream-0.5.18-linux-x86_64.tar.gz` в `bin/` и закоммитить (убрать `bin/` из `.gitignore`) |
+| `409 Conflict` / `terminated by other getUpdates` в логах бота | второй поллер: локальный бот или второй инстанс | остановить локальный бот (`stop-bot.cmd`), оставить один инстанс |
+
+Ограничения: один активный инстанс на базу (второй процесс с той же базой не запускай), регион R2 указывается как `auto`, а удаление бакета удаляет и резервные копии. Бинарник Litestream при каждом деплое скачивается заново (~20 МБ), потому что `bin/` лежит на стираемом диске.
 
 ## Переменные окружения
 
