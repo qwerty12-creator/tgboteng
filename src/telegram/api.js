@@ -7,28 +7,56 @@ function endpoint() {
   return `https://api.telegram.org/bot${config.botToken}`;
 }
 
-async function callApi(method, payload = {}, { timeoutMs = 40000 } = {}) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(`${endpoint()}/${method}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-      signal: controller.signal,
-    });
-    const data = await response.json().catch(() => null);
-    if (!data || !data.ok) {
-      const description = data?.description ?? `HTTP ${response.status}`;
-      const error = new Error(`Telegram ${method}: ${description}`);
-      error.description = description;
-      error.code = data?.error_code;
-      throw error;
+const NETWORK_ERROR = /fetch failed|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|socket hang up|network|aborted/i;
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Сетевой сбой или временная ошибка сервера Telegram: запрос имеет смысл повторить.
+ * Раньше на Render `fetch failed` терял готовый ответ бота — пользователь видел
+ * «Распознаю речь…», а сообщение с результатом не приходило.
+ */
+export function isRetryableError(error) {
+  if (!error) return false;
+  const code = Number(error.code);
+  if (Number.isFinite(code) && (code === 429 || code >= 500)) return true;
+  if (error.name === 'AbortError' || error.name === 'TimeoutError') return true;
+  return NETWORK_ERROR.test(String(error.message ?? error));
+}
+
+async function callApi(method, payload = {}, { timeoutMs = 40000, retries = 3 } = {}) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= retries; attempt += 1) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(`${endpoint()}/${method}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+      const data = await response.json().catch(() => null);
+      if (!data || !data.ok) {
+        const description = data?.description ?? `HTTP ${response.status}`;
+        const error = new Error(`Telegram ${method}: ${description}`);
+        error.description = description;
+        error.code = data?.error_code ?? response.status;
+        error.retryAfter = data?.parameters?.retry_after;
+        throw error;
+      }
+      return data.result;
+    } catch (error) {
+      lastError = error;
+      if (attempt >= retries || !isRetryableError(error)) throw error;
+      const delay = error.retryAfter ? error.retryAfter * 1000 : 300 * attempt;
+      console.warn(`[tg] ${method}: ${error.message} — повтор ${attempt + 1}/${retries} через ${delay} мс`);
+      await sleep(delay);
+    } finally {
+      clearTimeout(timer);
     }
-    return data.result;
-  } finally {
-    clearTimeout(timer);
   }
+  throw lastError;
 }
 
 /** Режет длинный текст по строкам, чтобы не превысить лимит Telegram. */

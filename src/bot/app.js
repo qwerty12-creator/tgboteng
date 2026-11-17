@@ -14,6 +14,7 @@ import { pickWritingTopic } from '../content/writingTopics.js';
 import { TOPIC_BY_ID } from '../content/grammarBank.js';
 import { pickQuestions } from '../core/exercises.js';
 import { conversationTurn, formatChatReply } from '../core/conversation.js';
+import { sectionLabel } from '../core/sections.js';
 import { aiAvailable } from '../ai/provider.js';
 import { sttAvailable, sttProblem, transcribeAudio, sttLimits, asrSupportedMime } from '../ai/speech.js';
 
@@ -89,11 +90,10 @@ async function routeText(user, chatId, text) {
     case 'writing':
       return saveWriting(user, chatId, text, state.payload);
     default:
-      return tg.sendMessage(
-        chatId,
-        ['Текст принят, но сейчас мы не в разделе с вводом.', '', 'Выбери, что сделать:', '• 📖 Дневник — записать день', '• 💬 AI Conversation — поговорить', '• ✍️ Writing — написать текст'].join('\n'),
-        { reply_markup: kb.mainMenu() },
-      );
+      // Любой другой раздел (меню, статистика, грамматика, повторение слов…):
+      // не заставляем выбирать режим, а отвечаем как AI-собеседник,
+      // подсказав модели, где пользователь находится сейчас.
+      return chatTurn(user, chatId, text, { section: sectionLabel(state), keyboard: kb.mainMenu() });
   }
 }
 
@@ -170,7 +170,7 @@ async function handleVoice(user, chatId, message) {
         [
           'Не разобрал речь в голосовом 😔',
           '',
-          'Похоже, запись слишком тихая или короткая. Попробуй ещё раз ближе к микрофону — или напиши текстом.',
+          'Сервис распознавания не нашёл в записи слов. Запиши 3–5 секунд и говори чуть громче, ближе к микрофону — или напиши текстом.',
         ].join('\n'),
         { reply_markup: kb.mainMenu() },
       );
@@ -354,9 +354,9 @@ async function saveWord(user, chatId, text) {
 
 /* ----------------------------------------------------------- AI-чат */
 
-async function chatTurn(user, chatId, text) {
+async function chatTurn(user, chatId, text, { section = '', keyboard = null } = {}) {
   await tg.sendChatAction(chatId, 'typing');
-  const turn = await conversationTurn(user, text);
+  const turn = await conversationTurn(user, text, { section });
   // Проверка гибридная: локальные правила + AI-корректор.
   // Есть замечания или текст не на английском — XP за ход не начисляется.
   const hasErrors = hasIssues(turn.review);
@@ -367,7 +367,7 @@ async function chatTurn(user, chatId, text) {
   if (hasErrors && !nonEnglish) parts.push('', '⚠️ Есть замечания — XP за это сообщение не начислен.');
   const rewards = rewardLines(reward).filter((line) => !line.includes('Стрик'));
   if (rewards.length) parts.push('', ...rewards);
-  return tg.sendMessage(chatId, parts.join('\n'), { reply_markup: kb.chatKeyboard() });
+  return tg.sendMessage(chatId, parts.join('\n'), { reply_markup: keyboard ?? kb.chatKeyboard() });
 }
 
 /* ---------------------------------------------------------- грамматика */

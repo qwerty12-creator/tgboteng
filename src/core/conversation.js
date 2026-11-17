@@ -12,7 +12,7 @@ import { escapeHtml, mistakeProfile } from './insights.js';
  * сохранение истории. Ошибки запоминаются, а решение про XP принимает вызывающий код
  * через rewardForReview(review).
  */
-export async function conversationTurn(user, userText) {
+export async function conversationTurn(user, userText, { section = '' } = {}) {
   const history = db.chatHistory(user.id, 12);
   const mistakes = mistakeProfile(user.id, 30, 4).map((item) => item.title);
   // Проверка ошибок идёт параллельно с ответом модели, чтобы не удваивать ожидание.
@@ -34,6 +34,7 @@ export async function conversationTurn(user, userText) {
             user,
             mistakes,
             englishOnly: Boolean(user.english_only),
+            section,
           }),
         },
         ...history.map((row) => ({ role: row.role === 'assistant' ? 'assistant' : 'user', content: row.text })),

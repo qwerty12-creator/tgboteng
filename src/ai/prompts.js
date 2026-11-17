@@ -1,7 +1,7 @@
 import { buildCorrectionRules, REVIEW_CONTRACT } from './correctionRules.js';
 
 /** Системный промпт для AI Conversation (режим 08). */
-export function buildSystemPrompt({ user, mistakes = [], englishOnly = true }) {
+export function buildSystemPrompt({ user, mistakes = [], englishOnly = true, section = '' }) {
   const level = user?.level_hint || 'A2';
   const levelRules = {
     A1: 'Use very short sentences (up to 8 words), only basic vocabulary and Present Simple mostly.',
@@ -31,11 +31,17 @@ export function buildSystemPrompt({ user, mistakes = [], englishOnly = true }) {
       ? '- The user chose the English-only mode: never write in Russian.'
       : '- If the user writes in Russian, you may add one short Russian gloss in brackets, then continue in English.',
     mistakeLine,
+    // Пользователь может писать боту из любого раздела: сообщаем модели, где он сейчас.
+    section
+      ? `- The user wrote from this bot section: ${section}. If it is relevant, use it as context; otherwise just keep the conversation going.`
+      : null,
     '',
     'Example of the tone:',
     'User: Today I was very tired because I had many lessons.',
     "You: That sounds exhausting! Which lesson was the most difficult today?",
-  ].join('\n');
+  ]
+    .filter((line) => line !== null && line !== undefined)
+    .join('\n');
 }
 
 /**
