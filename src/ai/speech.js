@@ -106,6 +106,7 @@ export async function transcribeViaApi(audio, options = {}) {
         `duration_ms=${data?.duration_ms ?? '-'}`,
         `bytes=${audio.buffer.length}`,
         `mime=${mimeType || 'unknown'}`,
+        `body=${JSON.stringify(data ?? {}).slice(0, 160)}`,
       ].join(' ');
       throw new Error(`STT_EMPTY_RESPONSE ${details}`);
     }

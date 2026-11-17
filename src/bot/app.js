@@ -162,6 +162,19 @@ async function handleVoice(user, chatId, message) {
       `[voice] ошибка (mime=${media?.mime_type ?? '-'}, size=${media?.file_size ?? '-'}, dur=${media?.duration ?? '-'}s):`,
       reason,
     );
+    // ASR ответил 200 с пустым текстом: обычно это тишина, шум или слишком
+    // короткая фраза — просим повторить, а не переписывать текстом.
+    if (reason.startsWith('STT_EMPTY_RESPONSE')) {
+      return tg.sendMessage(
+        chatId,
+        [
+          'Не разобрал речь в голосовом 😔',
+          '',
+          'Похоже, запись слишком тихая или короткая. Попробуй ещё раз ближе к микрофону — или напиши текстом.',
+        ].join('\n'),
+        { reply_markup: kb.mainMenu() },
+      );
+    }
     return tg.sendMessage(
       chatId,
       ['Не получилось разобрать голосовое 😔', '', 'Можно написать это текстом — проверю так же.'].join('\n'),
