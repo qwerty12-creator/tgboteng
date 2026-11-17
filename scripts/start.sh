@@ -38,8 +38,14 @@ install_litestream() {
 }
 
 if replication_enabled && install_litestream; then
-  echo "[litestream] репликация в ${LITESTREAM_BUCKET}/${LITESTREAM_PREFIX:-lingo}, база ${DB_PATH}"
-  exec "$BIN" replicate -config ./litestream.yml -exec "node src/index.js" -restore-if-db-not-exists
+  echo "[litestream] репликация в ${LITESTREAM_BUCKET}/${LITESTREAM_PREFIX}, база ${DB_PATH}"
+  # Сначала восстанавливаем базу (если её нет) — это же и проверка доступа к бакету.
+  # Неверные ключи R2 не должны ронять бота: тогда стартуем без репликации.
+  if "$BIN" restore -config ./litestream.yml -if-db-not-exists -if-replica-exists "$DB_PATH"; then
+    exec "$BIN" replicate -config ./litestream.yml -exec "node src/index.js" -restore-if-db-not-exists
+  fi
+  echo "[litestream] WARN восстановление не удалось — стартую без репликации"
+  exec node src/index.js
 fi
 
 echo "[litestream] репликация не настроена — база живёт только внутри контейнера"
