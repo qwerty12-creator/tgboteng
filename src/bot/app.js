@@ -105,18 +105,10 @@ async function handleVoice(user, chatId, message) {
   const media = message.voice ?? message.audio;
 
   if (!sttAvailable()) {
+    console.warn('[voice] распознавание речи недоступно:', sttProblem() || 'не найдены whisper-cli и модель');
     return tg.sendMessage(
       chatId,
-      [
-        '🎧 Голосовые пока не подключены.',
-        '',
-        `Причина: <i>${escapeHtml(sttProblem() || 'не найдены файлы whisper.cpp')}</i>`,
-        '',
-        'Нужны локальные whisper.cpp и ffmpeg: положи папку <code>whisper/</code> рядом с проектом',
-        'или укажи пути в <code>.env</code> — <code>WHISPER_EXE</code>, <code>WHISPER_MODEL</code>, <code>FFMPEG</code>.',
-        '',
-        'А пока можно написать то же самое текстом 🙂',
-      ].join('\n'),
+      ['🎧 Голосовые сообщения пока недоступны.', '', 'Напиши то же самое текстом — обработаю так же 🙂'].join('\n'),
       { reply_markup: kb.mainMenu() },
     );
   }
@@ -141,7 +133,7 @@ async function handleVoice(user, chatId, message) {
     console.error('[voice]', reason);
     return tg.sendMessage(
       chatId,
-      ['Не получилось разобрать голосовое 😔', `<i>${escapeHtml(reason)}</i>`, '', 'Можно написать это текстом — проверю так же.'].join('\n'),
+      ['Не получилось разобрать голосовое 😔', '', 'Можно написать это текстом — проверю так же.'].join('\n'),
       { reply_markup: kb.mainMenu() },
     );
   }
@@ -160,7 +152,7 @@ async function onCommand(user, chatId, raw) {
       db.clearState(user.id);
       return tg.sendMessage(chatId, texts.menuText(user, userStatsSafe(user.id)), { reply_markup: kb.mainMenu() });
     case '/help':
-      return tg.sendMessage(chatId, texts.HELP_TEXT, { reply_markup: kb.mainMenu() });
+      return tg.sendMessage(chatId, texts.helpText(sttAvailable()), { reply_markup: kb.mainMenu() });
     case '/diary':
       return openDiary(user, chatId);
     case '/words':
@@ -204,7 +196,7 @@ async function onCommand(user, chatId, raw) {
 
 async function openDiary(user, chatId) {
   db.setState(user.id, 'diary', {});
-  return tg.sendMessage(chatId, texts.DIARY_TEXT, {
+  return tg.sendMessage(chatId, texts.diaryText(sttAvailable()), {
     reply_markup: kb.diaryKeyboard(),
     parse_mode: 'HTML',
   });
@@ -220,12 +212,12 @@ function openGrammar(chatId) {
 }
 
 function openWriting(chatId) {
-  return tg.sendMessage(chatId, texts.WRITING_TEXT, { reply_markup: kb.writingMenu() });
+  return tg.sendMessage(chatId, texts.writingText(sttAvailable()), { reply_markup: kb.writingMenu() });
 }
 
 async function openChat(user, chatId) {
   db.setState(user.id, 'chat', {});
-  return tg.sendMessage(chatId, texts.chatReadyText(aiAvailable()), { reply_markup: kb.chatKeyboard() });
+  return tg.sendMessage(chatId, texts.chatReadyText(aiAvailable(), sttAvailable()), { reply_markup: kb.chatKeyboard() });
 }
 
 /* ------------------------------------------------------------ дневник */
@@ -811,7 +803,7 @@ async function routeCallback(user, chatId, messageId, data) {
       });
     case 'menu:diary':
       db.setState(user.id, 'diary', {});
-      return tg.editMessageText(chatId, messageId, texts.DIARY_TEXT, { reply_markup: kb.diaryKeyboard() });
+      return tg.editMessageText(chatId, messageId, texts.diaryText(sttAvailable()), { reply_markup: kb.diaryKeyboard() });
     case 'menu:words':
       db.clearState(user.id);
       return tg.editMessageText(chatId, messageId, texts.WORDS_TEXT, {
@@ -822,10 +814,12 @@ async function routeCallback(user, chatId, messageId, data) {
       return tg.editMessageText(chatId, messageId, texts.GRAMMAR_TEXT, { reply_markup: kb.grammarMenu() });
     case 'menu:writing':
       db.clearState(user.id);
-      return tg.editMessageText(chatId, messageId, texts.WRITING_TEXT, { reply_markup: kb.writingMenu() });
+      return tg.editMessageText(chatId, messageId, texts.writingText(sttAvailable()), { reply_markup: kb.writingMenu() });
     case 'menu:chat':
       db.setState(user.id, 'chat', {});
-      return tg.editMessageText(chatId, messageId, texts.chatReadyText(aiAvailable()), { reply_markup: kb.chatKeyboard() });
+      return tg.editMessageText(chatId, messageId, texts.chatReadyText(aiAvailable(), sttAvailable()), {
+        reply_markup: kb.chatKeyboard(),
+      });
     case 'menu:dashboard':
       return sendDashboard(user, chatId);
     case 'menu:insight':
@@ -837,7 +831,7 @@ async function routeCallback(user, chatId, messageId, data) {
     case 'menu:settings':
       return sendSettings(user, chatId, messageId);
     case 'menu:help':
-      return tg.editMessageText(chatId, messageId, texts.HELP_TEXT, { reply_markup: kb.backToMenu() });
+      return tg.editMessageText(chatId, messageId, texts.helpText(sttAvailable()), { reply_markup: kb.backToMenu() });
     default:
       break;
   }
