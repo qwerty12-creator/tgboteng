@@ -163,50 +163,68 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\autostart.ps1 remove
 - один токен — один процесс: перед запуском в облаке останови локальный бот (`stop-bot.cmd`), иначе Telegram вернёт `409 Conflict` / `terminated by other getUpdates`;
 - голосовые работают и в облаке: локального whisper.cpp в Linux-контейнере нет, поэтому бот сам переключается на DeepSeek ASR (`POST https://api.deepseek.com/v1/tools/asr`) с тем же ключом `AI_API_KEY` (в логах `[stt] голосовые: DeepSeek ASR (...)`); лимиты ASR — 120 секунд и 8 МБ на файл.
 
-### Сохранность прогресса: Litestream + Cloudflare R2
+### Сохранность прогресса: Litestream + S3-хранилище
 
-Free-план стирает диск контейнера при каждом редеплое и рестарте, поэтому база непрерывно реплицируется в Cloudflare R2 (S3 API) и восстанавливается оттуда при старте. Кода бота это не касается: `scripts/start.sh` запускает `litestream replicate -config litestream.yml -exec "node src/index.js" -restore-if-db-not-exists`, конфиг лежит в `litestream.yml`.
+Free-план стирает диск контейнера при каждом редеплое и рестарте, поэтому база непрерывно реплицируется во внешнее S3-хранилище и восстанавливается оттуда при старте. Кода бота это не касается: `scripts/start.sh` запускает `litestream replicate -config litestream.yml -exec "node src/index.js" -restore-if-db-not-exists`, конфиг лежит в `litestream.yml`.
+
+Хранилище — любой S3-совместимый сервис. Основной вариант — **Supabase Storage**: бесплатный тир, карта не нужна, есть [официальный гайд Litestream](https://litestream.io/guides/supabase/), а `force-path-style` и `sign-payload` Litestream включает сам, когда видит домен `*.supabase.co` (в v0.5.9+).
 
 Как это работает:
 
-- `src/db/index.js` уже включает WAL, а Litestream читает WAL и раз в 10 секунд (`sync-interval`) отправляет изменения в R2;
-- при старте, если файла `data/lingo.db` нет, база восстанавливается из R2 — XP, стрики, слова и дневник переживают редеплой и засыпание инстанса;
+- `src/db/index.js` уже включает WAL, а Litestream читает WAL и раз в 10 секунд (`sync-interval`) отправляет изменения в бакет;
+- при старте, если файла `data/lingo.db` нет, база восстанавливается из бакета — XP, стрики, слова и дневник переживают редеплой и засыпание инстанса;
 - если переменные `LITESTREAM_*` не заданы, скрипт просто делает `exec node src/index.js` — локальный запуск не меняется;
-- бинарник Litestream скачивается при первом старте в `bin/` (папка в `.gitignore`), версия `v0.5.18` — свежая из релизов, флаг восстановления появился только в v0.5.6;
-- перед стартом скрипт пробует восстановить базу (`litestream restore -if-db-not-exists -if-replica-exists`) — это же и проверка доступа к бакету: если ключи R2 неверные или бакет недоступен, бот всё равно поднимется, просто в логах будет `[litestream] WARN восстановление не удалось — стартую без репликации`;
+- бинарник Litestream скачивается при первом старте в `bin/` (папка в `.gitignore`), версия `v0.5.18` — флаг восстановления появился только в v0.5.6;
+- перед стартом скрипт пробует восстановить базу (`litestream restore -if-db-not-exists -if-replica-exists`) — это же и проверка доступа к бакету: если ключи неверные или бакет недоступен, бот всё равно поднимется, просто в логах будет `[litestream] WARN восстановление не удалось — стартую без репликации`;
 - Litestream создаёт в базе служебную таблицу `_litestream_lock`, удалять её нельзя.
 
-Настройка R2 (один раз):
+Настройка хранилища (один раз) — вариант A: Supabase Storage, без карты
 
-1. **Бакет**: [Cloudflare Dashboard → R2](https://dash.cloudflare.com/?to=/:account/r2/overview) → **Create bucket** → имя `lingo-backups` (Free: 10 ГБ, имя только строчными буквами, цифрами и дефисами; если занято — добавь суффикс) → Location: **Automatic** → **Create bucket**.
-2. **Account ID**: на той же странице R2 Overview справа блок **Account details → Account ID** → **Copy**. Это 32-символьная строка вида `a1b2c3d4e5f6...`; она же видна в адресе дашборда `dash.cloudflare.com/<AccountID>/r2/...`.
-3. **Токен**: [R2 → Manage R2 API Tokens](https://dash.cloudflare.com/?to=/:account/r2/api-tokens) → **Create API Token** → Token name: `litestream-lingo` → Permissions: **Object Read & Write** → **Apply to specific buckets only** → выбрать `lingo-backups` → TTL: **Forever** → **Create API Token**. На следующем экране один раз показываются **Access Key ID** и **Secret Access Key** (Secret больше не покажут — сохрани сразу) и endpoint вида `https://<AccountID>.r2.cloudflarestorage.com`.
-4. **Render**: `https://dashboard.render.com/` → сервис `tgboteng` → **Environment** → **+ Add Environment Variable** (или **Edit → Bulk Edit**, по одной строке `KEY=value`) — добавить пять переменных и нажать **Save Changes** (Render запустит деплой):
+1. **Регистрация**: https://supabase.com/dashboard → **Sign in with GitHub** (карта не нужна, бесплатный тир: 1 ГБ хранилища, база у нас — единицы мегабайт).
+2. **Проект**: **New project** → Name: `lingo` → Database Password: сгенерировать и сохранить (для Litestream она не нужна, но Supabase требует) → Region: ближайший, например **Central EU (Frankfurt)** → **Create new project** (готовится 1–2 минуты).
+3. **Project ref**: он в адресе `supabase.com/dashboard/project/`**`abcdefghijklmnopqrst`**, либо **Settings → General → Reference ID**. Это 20 символов.
+4. **Бакет**: левое меню **Storage** → **New bucket** → Name: `lingo-backups` → **Public bucket оставить выключенным** (боту публичный доступ не нужен) → **Save**.
+5. **S3-ключи**: **Settings → Storage** → прокрутить до **S3 Access Keys** → **Generate new key** (если раздела нет, включи **S3 protocol / S3 connection** на этой же странице) → сохранить **Access Key ID** и **Secret Access Key** — Secret показывается один раз.
+6. **Endpoint**: `https://<project_ref>.supabase.co/storage/v1/s3`
 
-   - `LITESTREAM_BUCKET` = `lingo-backups`
-   - `LITESTREAM_PREFIX` = `lingo`
-   - `LITESTREAM_ENDPOINT` = `https://<AccountID>.r2.cloudflarestorage.com` (только домен: без имени бакета, без слэша в конце)
-   - `LITESTREAM_ACCESS_KEY_ID` = Access Key ID из шага 3
-   - `LITESTREAM_SECRET_ACCESS_KEY` = Secret Access Key из шага 3
+Настройка хранилища — вариант B: Cloudflare R2 / облака РФ (нужна карта, российская подходит)
 
-5. **Start Command**: сервис → **Settings** → блок **Build & Deploy** → поле **Start Command** → `sh scripts/start.sh` → **Save Changes**. До этого изменения сервис запускает старый `node src/index.js`, и Litestream не стартует вообще.
+- **Cloudflare R2**: [R2 → Create bucket](https://dash.cloudflare.com/?to=/:account/r2/overview), Account ID справа в **Account details**, ключи — [Manage R2 API Tokens](https://dash.cloudflare.com/?to=/:account/r2/api-tokens) с правами **Object Read & Write**, endpoint `https://<AccountID>.r2.cloudflarestorage.com`, регион `auto`.
+- **Yandex Object Storage**: endpoint `https://storage.yandexcloud.net`, регион `ru-central1`, ключи в **Object Storage → Access keys** (сервисный аккаунт с ролью `storage.editor`).
+- **Timeweb Cloud S3**: endpoint `https://s3.twcstorage.ru`, регион `ru-1`, ключи в панели **S3 и CDN**.
+- **Selectel**: endpoint `https://s3.storage.selcloud.ru`, регион `ru-1`, доступы в разделе **Объектное хранилище**.
+
+Переменные в Render (одинаковые для любого варианта)
+
+`https://dashboard.render.com/` → сервис `tgboteng` → **Environment** → **+ Add Environment Variable** (или **Edit → Bulk Edit**, по одной строке `KEY=value`) → **Save Changes**:
+
+- `LITESTREAM_BUCKET` = `lingo-backups`
+- `LITESTREAM_PREFIX` = `lingo`
+- `LITESTREAM_ENDPOINT` = endpoint из выбранного варианта (только домен и путь, без имени бакета, без слэша в конце)
+- `LITESTREAM_REGION` = `auto` (Supabase, R2) / `ru-1` (Timeweb, Selectel) / `ru-central1` (Yandex)
+- `LITESTREAM_ACCESS_KEY_ID` = Access Key ID
+- `LITESTREAM_SECRET_ACCESS_KEY` = Secret Access Key
+
+Start Command в Render
+
+Сервис → **Settings** → блок **Build & Deploy** → поле **Start Command** → `sh scripts/start.sh` → **Save Changes**. До этого изменения сервис запускает старый `node src/index.js`, и Litestream не стартует вообще.
 
 В логах (**Logs → Live tail**) после редеплоя: `[litestream] скачиваю v0.5.18 (linux-x86_64)`, затем `[litestream] репликация в lingo-backups/lingo, база /opt/render/project/src/data/lingo.db`, затем `[http] health-сервер: 0.0.0.0:10000` и `[bot] запущен: @...`.
 
-Проверка: сделай в боте любое действие с XP, затем **Manual Deploy → Clear build cache & deploy** — после рестарта прогресс должен сохраниться. В бакете (`R2 → lingo-backups → Objects`) при этом появляется префикс `lingo/` с файлами `generations/...` и `ltx/...`. Восстановление вручную: `litestream restore -config litestream.yml -o ./restored.db data/lingo.db`.
+Проверка: сделай в боте любое действие с XP, затем **Manual Deploy → Clear build cache & deploy** — после рестарта прогресс должен сохраниться. В бакете при этом появляется префикс `lingo/` с файлами `generations/...` и `ltx/...` (Supabase: **Storage → lingo-backups → lingo**). Восстановление вручную: `litestream restore -config litestream.yml -o ./restored.db data/lingo.db`.
 
 Если что-то не так (ищи строки в **Logs**):
 
 | В логах | Причина | Что делать |
 | --- | --- | --- |
 | `[litestream] репликация не настроена` | не заданы или пустые `LITESTREAM_ENDPOINT` / `LITESTREAM_BUCKET` | проверить имена переменных в **Environment**, сохранить заново |
-| `[litestream] WARN восстановление не удалось` + `AccessDenied`, `403`, `SignatureDoesNotMatch` | токен без прав на бакет или неверные ключи | пересоздать токен: **Object Read & Write**, scope — конкретный бакет `lingo-backups` |
-| `no such host`, `dial tcp: lookup ... failed` | опечатка в endpoint или лишний путь | endpoint ровно `https://<AccountID>.r2.cloudflarestorage.com` |
-| `The specified bucket does not exist` | опечатка в имени бакета | сверить `LITESTREAM_BUCKET` с именем в R2 |
+| `[litestream] WARN восстановление не удалось` + `AccessDenied`, `403`, `SignatureDoesNotMatch` | неверные ключи, ключи без прав или не включён S3-протокол в Supabase | пересоздать ключи; в Supabase — **Settings → Storage → S3 Access Keys → Generate new key** |
+| `no such host`, `dial tcp: lookup ... failed` | опечатка в endpoint | Supabase: `https://<ref>.supabase.co/storage/v1/s3`; R2: `https://<AccountID>.r2.cloudflarestorage.com` |
+| `The specified bucket does not exist` | опечатка в имени бакета или бакет не создан | сверить `LITESTREAM_BUCKET` с именем в панели хранилища |
 | `[litestream] не удалось скачать бинарник` | GitHub недоступен из контейнера | передеплоить; если повторяется — скачать `litestream-0.5.18-linux-x86_64.tar.gz` в `bin/` и закоммитить (убрать `bin/` из `.gitignore`) |
 | `409 Conflict` / `terminated by other getUpdates` в логах бота | второй поллер: локальный бот или второй инстанс | остановить локальный бот (`stop-bot.cmd`), оставить один инстанс |
 
-Ограничения: один активный инстанс на базу (второй процесс с той же базой не запускай), регион R2 указывается как `auto`, а удаление бакета удаляет и резервные копии. Бинарник Litestream при каждом деплое скачивается заново (~20 МБ), потому что `bin/` лежит на стираемом диске.
+Ограничения: один активный инстанс на базу (второй процесс с той же базой не запускай), удаление бакета удаляет и резервные копии. Бинарник Litestream при каждом деплое скачивается заново (~20 МБ), потому что `bin/` лежит на стираемом диске. Бесплатный проект Supabase засыпает после недели полной неактивности — Litestream пишет каждые 10 секунд, так что при работающем боте этого не случится; если проект всё же уснул, разбудить его можно в дашборде Supabase.
 
 ## Переменные окружения
 
@@ -231,11 +249,12 @@ Free-план стирает диск контейнера при каждом �
 | `STT_MAX_BYTES` | Максимальный размер файла для облачного ASR, по умолчанию 8 МБ |
 | `STT_MAX_SECONDS` | Максимальная длительность для облачного ASR, по умолчанию 120 с |
 | `STT_API_TIMEOUT_MS` | Таймаут запроса к ASR, по умолчанию 120000 |
-| `LITESTREAM_BUCKET` | Бакет R2 для репликации БД; если пусто — репликация выключена |
+| `LITESTREAM_BUCKET` | Бакет S3-хранилища для репликации БД; если пусто — репликация выключена |
 | `LITESTREAM_PREFIX` | Префикс (папка) внутри бакета, по умолчанию `lingo` |
-| `LITESTREAM_ENDPOINT` | S3-endpoint R2: `https://<account_id>.r2.cloudflarestorage.com` |
-| `LITESTREAM_ACCESS_KEY_ID` | Access Key ID токена R2 (Object Read & Write) |
-| `LITESTREAM_SECRET_ACCESS_KEY` | Secret Access Key токена R2 |
+| `LITESTREAM_ENDPOINT` | S3-endpoint: Supabase `https://<ref>.supabase.co/storage/v1/s3`, R2 `https://<account_id>.r2.cloudflarestorage.com` |
+| `LITESTREAM_REGION` | Регион S3: `auto` (Supabase, R2), `ru-1` (Timeweb, Selectel), `ru-central1` (Yandex) |
+| `LITESTREAM_ACCESS_KEY_ID` | Access Key ID (Supabase S3 key / R2 token / ключ облака) |
+| `LITESTREAM_SECRET_ACCESS_KEY` | Secret Access Key |
 
 Голосовые: бот скачивает `voice`/`audio` через `getFile` и распознаёт речь двумя путями:
 

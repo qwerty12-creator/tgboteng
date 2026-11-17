@@ -8,7 +8,9 @@ dbs:
       bucket: ${LITESTREAM_BUCKET}
       path: ${LITESTREAM_PREFIX}
       endpoint: ${LITESTREAM_ENDPOINT}
-      region: auto
+      # auto — для Cloudflare R2 и большинства S3; для Supabase Storage можно
+      # оставить auto, для облаков РФ иногда нужен явный регион (ru-1, ru-central1).
+      region: ${LITESTREAM_REGION}
       access-key-id: ${LITESTREAM_ACCESS_KEY_ID}
       secret-access-key: ${LITESTREAM_SECRET_ACCESS_KEY}
       sync-interval: 10s

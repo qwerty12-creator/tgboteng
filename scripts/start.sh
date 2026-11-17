@@ -14,6 +14,7 @@ case "$DB_PATH" in
 esac
 export DB_PATH
 export LITESTREAM_PREFIX="${LITESTREAM_PREFIX:-lingo}"
+export LITESTREAM_REGION="${LITESTREAM_REGION:-auto}"
 
 replication_enabled() {
   [ -n "${LITESTREAM_ENDPOINT:-}" ] && [ -n "${LITESTREAM_BUCKET:-}" ]
