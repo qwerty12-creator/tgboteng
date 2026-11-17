@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { resolveStt } from '../src/config.js';
-import { asrErrorCode, asrSupportedMime, audioFileName, buildWhisperArgs, cleanTranscript, runProcess, transcribeViaApi } from '../src/ai/speech.js';
+import { asrErrorCode, asrSupportedMime, audioFileName, buildWhisperArgs, cleanTranscript, looksLikeSupportedScript, runProcess, transcribeViaApi } from '../src/ai/speech.js';
 
 test('resolveStt по умолчанию берёт локальный whisper из своей папки проекта', () => {
   const stt = resolveStt({}, 'C:\\lingo');
@@ -174,5 +174,23 @@ test('transcribeViaApi: ошибки HTTP и лимиты не пропуска�
 
   const empty = async () => new Response(JSON.stringify({ text: '   ' }), { status: 200 });
   await assert.rejects(() => transcribeViaApi(asrAudio(), { fetchImpl: empty, settings: ASR_SETTINGS }), /STT_EMPTY_RESPONSE/);
+
+  // У DeepSeek ASR нет параметра language: на короткой записи автодетект иногда
+  // выдаёт китайский, и такой транскрипт нельзя показывать как «услышанное».
+  const foreign = async () =>
+    new Response(JSON.stringify({ request_id: 'r2', text: '就不是叫。', duration_ms: 900 }), { status: 200 });
+  await assert.rejects(
+    () => transcribeViaApi(asrAudio(), { fetchImpl: foreign, settings: ASR_SETTINGS }),
+    /STT_UNEXPECTED_SCRIPT/,
+  );
+});
+
+test('looksLikeSupportedScript: латиница и кириллица проходят, иероглифы — нет', () => {
+  assert.equal(looksLikeSupportedScript('Hello world!'), true);
+  assert.equal(looksLikeSupportedScript('Привет, как дела? 42'), true);
+  assert.equal(looksLikeSupportedScript("I'm fine — thanks 🙂"), true);
+  assert.equal(looksLikeSupportedScript('就不是叫。'), false);
+  assert.equal(looksLikeSupportedScript('こんにちは'), false);
+  assert.equal(looksLikeSupportedScript(''), false);
 });
 

@@ -110,6 +110,14 @@ export async function transcribeViaApi(audio, options = {}) {
       ].join(' ');
       throw new Error(`STT_EMPTY_RESPONSE ${details}`);
     }
+    if (!looksLikeSupportedScript(text)) {
+      // DeepSeek ASR определяет язык сам и на короткой или шумной записи иногда
+      // выдаёт иероглифы либо другую письменность. Такой «услышанный» текст в
+      // чат не отдаём — считаем распознавание неудачным.
+      throw new Error(
+        `STT_UNEXPECTED_SCRIPT text=${JSON.stringify(text.slice(0, 80))} bytes=${audio.buffer.length} mime=${mimeType || 'unknown'}`,
+      );
+    }
     return { text, provider: 'deepseek-asr' };
   } catch (error) {
     if (error?.name === 'AbortError') throw new Error('STT_TIMEOUT');
@@ -136,6 +144,18 @@ export function cleanTranscript(raw) {
     .join(' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+/**
+ * Бот понимает английский и русский, а ASR определяет язык сам — параметра
+ * language у DeepSeek нет. На 1–3-секундной записи автодетект иногда уходит в
+ * другую письменность (чаще всего в китайскую), поэтому транскрипт, где есть
+ * что-то кроме латиницы, кириллицы, цифр и пунктуации, считаем ошибкой.
+ */
+const SUPPORTED_SCRIPT = /^[\p{Script=Latin}\p{Script=Cyrillic}\p{Script=Common}]+$/u;
+
+export function looksLikeSupportedScript(text = '') {
+  return SUPPORTED_SCRIPT.test(String(text).trim());
 }
 
 /** Запуск внешнего процесса с таймаутом (ffmpeg, whisper-cli). */

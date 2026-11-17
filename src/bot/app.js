@@ -162,9 +162,9 @@ async function handleVoice(user, chatId, message) {
       `[voice] ошибка (mime=${media?.mime_type ?? '-'}, size=${media?.file_size ?? '-'}, dur=${media?.duration ?? '-'}s):`,
       reason,
     );
-    // ASR ответил 200 с пустым текстом: обычно это тишина, шум или слишком
-    // короткая фраза — просим повторить, а не переписывать текстом.
-    if (reason.startsWith('STT_EMPTY_RESPONSE')) {
+    // Пустой ответ ASR или транскрипт на «чужой» письменности (автодетект языка
+    // ушёл в китайский) — просим повторить, а не переписывать текстом.
+    if (reason.startsWith('STT_EMPTY_RESPONSE') || reason.startsWith('STT_UNEXPECTED_SCRIPT')) {
       return tg.sendMessage(
         chatId,
         [
