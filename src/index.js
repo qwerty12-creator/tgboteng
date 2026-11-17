@@ -67,9 +67,12 @@ async function poll() {
     } catch (error) {
       const description = error.description ?? error.message ?? String(error);
       if (/terminated by other getUpdates/i.test(description)) {
-        console.error('[poll] другой экземпляр бота уже слушает Telegram. Останови его и перезапусти.');
-        running = false;
-        break;
+        // Кто-то ещё поллит того же бота (второй инстанс Render или локальный
+        // запуск). Не выходим: при деплое старый контейнер гасится не сразу,
+        // и падение здесь превращалось в цикл перезапусков.
+        console.warn('[poll] другой экземпляр бота уже слушает Telegram. Жду 10 с и пробую снова.');
+        await sleep(10000);
+        continue;
       }
       if (error.name === 'AbortError') continue;
       console.error('[poll]', description);

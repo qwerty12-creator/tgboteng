@@ -98,7 +98,17 @@ export async function transcribeViaApi(audio, options = {}) {
     }
     const data = await response.json();
     const text = cleanTranscript(data?.text ?? '');
-    if (!text) throw new Error('STT_EMPTY_RESPONSE');
+    if (!text) {
+      // В чат это не уходит: детали нужны только в логах Render, чтобы понять,
+      // сервис не разобрал речь (duration_ms > 0) или получил битое аудио (0).
+      const details = [
+        `request_id=${data?.request_id ?? '-'}`,
+        `duration_ms=${data?.duration_ms ?? '-'}`,
+        `bytes=${audio.buffer.length}`,
+        `mime=${mimeType || 'unknown'}`,
+      ].join(' ');
+      throw new Error(`STT_EMPTY_RESPONSE ${details}`);
+    }
     return { text, provider: 'deepseek-asr' };
   } catch (error) {
     if (error?.name === 'AbortError') throw new Error('STT_TIMEOUT');

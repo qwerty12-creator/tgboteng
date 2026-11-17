@@ -148,14 +148,20 @@ async function handleVoice(user, chatId, message) {
     const file = await tg.getFile(media.file_id);
     if (!file?.file_path) throw new Error('Telegram не вернул путь к файлу');
     const buffer = await tg.downloadFile(file.file_path);
-    const { text } = await transcribeAudio({ buffer, mimeType: media.mime_type });
+    const { text, provider } = await transcribeAudio({ buffer, mimeType: media.mime_type });
+    console.log(
+      `[voice] распознано (${provider}): bytes=${buffer.length} mime=${media.mime_type} tg_duration=${media.duration ?? '-'}s`,
+    );
     const clean = text.replace(/\s+/g, ' ').trim();
     if (!clean) throw new Error('речь не распознана');
     await tg.sendMessage(chatId, `🎧 <b>Услышал:</b> <i>${escapeHtml(clean)}</i>`);
     return routeText(user, chatId, clean);
   } catch (error) {
-    const reason = String(error?.message ?? error).slice(0, 160);
-    console.error('[voice]', reason);
+    const reason = String(error?.message ?? error).slice(0, 200);
+    console.error(
+      `[voice] ошибка (mime=${media?.mime_type ?? '-'}, size=${media?.file_size ?? '-'}, dur=${media?.duration ?? '-'}s):`,
+      reason,
+    );
     return tg.sendMessage(
       chatId,
       ['Не получилось разобрать голосовое 😔', '', 'Можно написать это текстом — проверю так же.'].join('\n'),
